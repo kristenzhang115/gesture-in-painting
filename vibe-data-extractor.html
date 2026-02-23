@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vibe Hand Art — 数据提取器</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding:20px; background:#f7f7f8; color:#111 }
+    .container{max-width:980px;margin:0 auto}
+    h1{font-size:20px;margin-bottom:6px}
+    label{display:block;margin-top:12px}
+    input[type=text]{padding:6px;width:60%;margin-right:8px}
+    button{padding:8px 12px;margin-right:8px}
+    #canvasWrap{position:relative;margin-top:12px;border:1px solid #ddd;background:#222}
+    canvas{display:block;max-width:100%}
+    #info{margin-top:8px;color:#444}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Vibe Hand Art — 数据提取器（前端单页）</h1>
+    <div>
+      <label>请选择古典绘画图片文件：</label>
+      <input id="fileInput" type="file" accept="image/*">
+    </div>
+    <div>
+      <label>作品名称（导出时写入）：</label>
+      <input id="artName" type="text" placeholder="例如：Rembrandt - The Anatomy Lesson">
+      <button id="detectBtn" disabled>检测关键点</button>
+      <button id="exportBtn" disabled>导出 data.json</button>
+    </div>
+
+    <div id="canvasWrap">
+      <canvas id="canvas"></canvas>
+    </div>
+    <div id="info">提示：上传图片后点击“检测关键点”，确认标注后点击“导出 data.json”。</div>
+
+    <!-- 隐藏的 img 元素用于传入 MediaPipe（必须在 DOM 中） -->
+    <img id="sourceImg" style="display:none" />
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const artNameInput = document.getElementById('artName');
+    const detectBtn = document.getElementById('detectBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const sourceImg = document.getElementById('sourceImg');
+
+    let lastResults = null;
+    let lastFileName = 'data';
+
+    // 初始化 MediaPipe Hands（使用 CDN UMD 版本）
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    hands.onResults(onResults);
+
+    fileInput.addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      lastFileName = f.name.replace(/\.[^.]+$/, '') || 'data';
+      const url = URL.createObjectURL(f);
+      sourceImg.src = url;
+      sourceImg.onload = () => {
+        drawImageToCanvas(sourceImg);
+        detectBtn.disabled = false;
+        exportBtn.disabled = true;
+        lastResults = null;
+      };
+    });
+
+    detectBtn.addEventListener('click', async () => {
+      if (!sourceImg.src) return;
+      detectBtn.disabled = true;
+      // 调用 MediaPipe 对静态图片进行检测
+      try {
+        await hands.send({image: sourceImg});
+      } catch (err) {
+        alert('检测失败：' + err);
+      } finally {
+        detectBtn.disabled = false;
+      }
+    });
+
+    exportBtn.addEventListener('click', () => {
+      if (!lastResults) { alert('没有检测到关键点，请先检测。'); return; }
+      const artwork = (artNameInput.value || '').trim();
+      const data = buildExportData(artwork, lastResults, sourceImg.width, sourceImg.height);
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${lastFileName}_landmarks.json`;
+      a.click();
+    });
+
+    function drawImageToCanvas(img){
+      // 限制最大宽度以适配视图，但保存真实像素用于归一化信息
+      const maxDisplayWidth = 900;
+      let dw = img.naturalWidth;
+      let dh = img.naturalHeight;
+      if (dw > maxDisplayWidth) {
+        const ratio = maxDisplayWidth / dw;
+        dw = Math.round(dw * ratio);
+        dh = Math.round(dh * ratio);
+      }
+      canvas.width = dw;
+      canvas.height = dh;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img, 0, 0, dw, dh);
+    }
+
+    function onResults(results){
+      lastResults = results;
+      // 先将图片绘制回 canvas
+      drawImageToCanvas(sourceImg);
+      // 像素缩放：MediaPipe 的 normalized 坐标是基于原始图片尺寸（naturalWidth/naturalHeight）
+      // 但是我们只在 canvas 上显示（可能缩放），drawConnectors/drawLandmarks 接受 canvas context 并会使用 normalized coords
+      // 使用 drawing_utils 绘制关键点和连线
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        for (const landmarks of results.multiHandLandmarks){
+          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FFAA', lineWidth: 2});
+          drawLandmarks(ctx, landmarks, {color: '#FF0066', lineWidth: 1});
+        }
+        exportBtn.disabled = false;
+        document.getElementById('info').textContent = `检测到 ${results.multiHandLandmarks.length} 只手，准备导出。`;
+      } else {
+        exportBtn.disabled = true;
+        document.getElementById('info').textContent = '未检测到手部关键点，请调整图片或尝试另一张图。';
+      }
+    }
+
+    // 构建导出数据，归一化为位置/尺度不变的坐标
+    function buildExportData(artworkName, results, imgWidth, imgHeight){
+      const handsOut = [];
+      const multi = results.multiHandLandmarks || [];
+      const handedness = results.multiHandedness || [];
+
+      for (let i = 0; i < multi.length; i++){
+        const landmarks = multi[i]; // landmarks are normalized (x,y in [0,1]) relative to original image
+
+        // 计算质心（在 normalized 空间）
+        let cx = 0, cy = 0;
+        for (const lm of landmarks){ cx += lm.x; cy += lm.y; }
+        cx /= landmarks.length; cy /= landmarks.length;
+
+        // 计算最大距离（normalized 单位），作为尺度因子
+        let maxD = 0;
+        for (const lm of landmarks){
+          const dx = lm.x - cx; const dy = lm.y - cy;
+          const d = Math.hypot(dx, dy);
+          if (d > maxD) maxD = d;
+        }
+        if (maxD === 0) maxD = 1e-6;
+
+        // 生成归一化坐标：中心化后除以尺度，使坐标与位置/尺寸无关
+        const normalized = landmarks.map(lm => ({
+          x: (lm.x - cx) / maxD,
+          y: (lm.y - cy) / maxD,
+          z: (lm.z !== undefined ? lm.z / maxD : 0)
+        }));
+
+        const handLabel = (handedness[i] && handedness[i].label) ? handedness[i].label : null;
+
+        handsOut.push({
+          handedness: handLabel,
+          landmarks: normalized
+        });
+      }
+
+      return {
+        artwork: artworkName || null,
+        sourceFile: lastFileName || null,
+        imageSize: { width: imgWidth, height: imgHeight },
+        detectedHands: handsOut,
+        meta: { generator: 'Vibe Hand Art — Data Extractor (frontend only)', version: '1.0' }
+      };
+    }
+
+    // 使得用户按 Enter 后触发检测
+    artNameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !detectBtn.disabled) detectBtn.click(); });
+
+  </script>
+</body>
+</html>

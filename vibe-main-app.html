@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vibe Hand Art — 主应用</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #000;
+      overflow: hidden;
+      height: 100vh;
+    }
+    
+    #container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+    
+    #videoCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      object-fit: cover;
+      transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    /* 匹配成功时缩小到左下角 */
+    #videoCanvas.minimized {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      width: 280px;
+      height: 210px;
+      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      z-index: 8;
+    }
+    
+    /* 艺术作品背景层（淡入淡出） */
+    #artworkLayer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      background-color: #000;
+      opacity: 0;
+      transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+      pointer-events: none;
+      z-index: 5;
+    }
+    
+    #artworkLayer.active {
+      opacity: 1;
+    }
+    
+    /* 艺术作品信息卡 */
+    #artworkInfo {
+      position: absolute;
+      bottom: 30px;
+      right: 30px;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      padding: 20px 24px;
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      z-index: 12;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+      min-width: 280px;
+    }
+    
+    /* 匹配成功时移到右上角 */
+    #artworkInfo.active {
+      opacity: 1;
+      transform: translateY(0);
+      top: 30px;
+      right: 30px;
+      bottom: auto;
+    }
+    
+    #artworkTitle {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    
+    #artworkDesc {
+      font-size: 13px;
+      color: #aaa;
+      line-height: 1.5;
+    }
+    
+    /* 悬浮 UI 面板 */
+    #uiPanel {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 16px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      z-index: 10;
+    }
+    
+    #statusText {
+      text-align: center;
+      margin: 0;
+    }
+    
+    #statusText.detecting {
+      color: #00ff88;
+      font-weight: 500;
+    }
+    
+    #statusText.waiting {
+      color: #aaa;
+    }
+    
+    #matchInfo {
+      font-size: 12px;
+      color: #ffaa00;
+      margin-top: 8px;
+      text-align: center;
+    }
+    
+    /* 顶部控制条 */
+    #controlBar {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 6px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      z-index: 11;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    button {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    
+    button:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+    
+    button:active {
+      transform: scale(0.95);
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    #fps {
+      font-size: 12px;
+      color: #888;
+    }
+    
+    input[type=file] {
+      padding: 4px 8px;
+      font-size: 12px;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    #loadStatus {
+      font-size: 12px;
+      color: #00ff88;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="videoCanvas"></canvas>
+    <div id="artworkLayer"></div>
+    
+    <div id="controlBar">
+      <button id="mirrorBtn">镜像：开</button>
+      <div id="fps">FPS: 0</div>
+      <div id="loadStatus"></div>
+    </div>
+    
+    <div id="uiPanel">
+      <p id="statusText" class="waiting">正在初始化摄像头...</p>
+      <div id="matchInfo" style="display:none;"></div>
+    </div>
+    
+    <div id="artworkInfo">
+      <div id="artworkTitle"></div>
+      <div id="artworkDesc"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <script>
+    const container = document.getElementById('container');
+    const canvas = document.getElementById('videoCanvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const statusText = document.getElementById('statusText');
+    const matchInfo = document.getElementById('matchInfo');
+    const mirrorBtn = document.getElementById('mirrorBtn');
+    const fpsDisplay = document.getElementById('fps');
+    const dataFile = document.getElementById('dataFile');
+    const loadStatus = document.getElementById('loadStatus');
+    const artworkLayer = document.getElementById('artworkLayer');
+    const artworkInfo = document.getElementById('artworkInfo');
+    const artworkTitle = document.getElementById('artworkTitle');
+    const artworkDesc = document.getElementById('artworkDesc');
+    
+    let isMirrored = true;
+    let video = null;
+    let lastFrameTime = 0;
+    let frameCount = 0;
+    let fps = 0;
+    let isInitialized = false;
+    let isDataLoaded = false; // 标记数据是否已加载
+    
+    // 数据库和匹配状态
+    let handsDatabase = [];
+    let currentMatch = null;
+    let matchStartTime = 0;
+    let matchHoldDuration = 1000; // 1 秒
+    const SIMILARITY_THRESHOLD = 0.8; // 80%
+    
+    // 初始化 MediaPipe Hands
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.5
+    });
+    hands.onResults(onHandsResults);
+    
+    // 自动加载 data.json 和图片
+    async function autoLoadData() {
+      try {
+        const response = await fetch('./data.json');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        
+        // 解析数据库格式
+        if (Array.isArray(data)) {
+          handsDatabase = data;
+        } else if (data.detectedHands) {
+          handsDatabase = data.detectedHands.map(h => ({
+            artwork: data.artwork,
+            landmarks: h.landmarks
+          }));
+        } else {
+          handsDatabase = [];
+        }
+        
+        // 处理图片路径：如果 artwork 不是 URL，则视为相对路径
+        handsDatabase = handsDatabase.map(entry => {
+          let artworkPath = entry.artwork || '';
+          // 如果不包含 http 或 https，视为本地路径
+          // 如果已包含路径前缀，保持不变；否则添加 ./ 前缀
+          if (!artworkPath.startsWith('http') && artworkPath.length > 0) {
+            if (!artworkPath.startsWith('./') && !artworkPath.startsWith('/')) {
+              artworkPath = `./${artworkPath}`;
+            }
+            // 如果路径已是 ./ 或 / 开头，保持不变
+          }
+          return { ...entry, artwork: artworkPath };
+        });
+        
+        isDataLoaded = true;
+        loadStatus.textContent = `✓ 已加载 ${handsDatabase.length} 条记录`;
+        loadStatus.style.color = '#00ff88';
+        console.log('数据加载成功:', handsDatabase);
+      } catch (err) {
+        loadStatus.textContent = `⚠ 数据加载失败: ${err.message}`;
+        loadStatus.style.color = '#ff6666';
+        console.error('加载 data.json 失败:', err);
+      }
+    }
+    
+    // 镜像按钮事件
+    mirrorBtn.addEventListener('click', () => {
+      isMirrored = !isMirrored;
+      mirrorBtn.textContent = `镜像：${isMirrored ? '开' : '关'}`;
+    });
+    
+    // 调整 canvas 大小
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    
+    // 初始化摄像头
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        
+        video = document.createElement('video');
+        video.srcObject = stream;
+        video.play();
+        
+        video.onloadedmetadata = () => {
+          statusText.textContent = '摄像头已连接，检测中...';
+          statusText.classList.add('detecting');
+          statusText.classList.remove('waiting');
+          isInitialized = true;
+          gameLoop();
+        };
+      } catch (err) {
+        statusText.textContent = `摄像头初始化失败: ${err.message}`;
+        statusText.classList.remove('detecting');
+        statusText.classList.add('waiting');
+      }
+    }
+    
+    // 主渲染循环
+    async function gameLoop() {
+      if (!isInitialized || !video) return;
+      
+      // 计算 FPS
+      const now = performance.now();
+      if (now - lastFrameTime >= 1000) {
+        fps = frameCount;
+        frameCount = 0;
+        lastFrameTime = now;
+        fpsDisplay.textContent = `FPS: ${fps}`;
+      }
+      frameCount++;
+      
+      // 清空画布
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // 绘制视频帧（镜像）
+      ctx.save();
+      if (isMirrored) {
+        ctx.scale(-1, 1);
+        ctx.translate(-canvas.width, 0);
+      }
+      
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+      const scale = Math.max(canvas.width / videoWidth, canvas.height / videoHeight);
+      const scaledWidth = videoWidth * scale;
+      const scaledHeight = videoHeight * scale;
+      const offsetX = (canvas.width - scaledWidth) / 2;
+      const offsetY = (canvas.height - scaledHeight) / 2;
+      
+      ctx.drawImage(video, offsetX, offsetY, scaledWidth, scaledHeight);
+      ctx.restore();
+      
+      // 处理手部检测
+      try {
+        await hands.send({ image: video });
+      } catch (err) {
+        console.error('Hand detection error:', err);
+      }
+      
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // 余弦相似度计算
+    function cosineSimilarity(a, b) {
+      if (a.length !== b.length) return 0;
+      let dotProduct = 0;
+      let normA = 0;
+      let normB = 0;
+      for (let i = 0; i < a.length; i++) {
+        dotProduct += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+      }
+      const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+      return denominator === 0 ? 0 : dotProduct / denominator;
+    }
+    
+    // 关键点序列化为向量（用于相似度计算）
+    function landmarksToVector(landmarks) {
+      const vec = [];
+      for (const lm of landmarks) {
+        vec.push(lm.x, lm.y, lm.z || 0);
+      }
+      return vec;
+    }
+    
+    // 归一化 landmarks（中心化 + 尺度）
+    function normalizeLandmarks(landmarks) {
+      if (landmarks.length === 0) return [];
+      
+      let cx = 0, cy = 0, cz = 0;
+      for (const lm of landmarks) {
+        cx += lm.x;
+        cy += lm.y;
+        cz += lm.z || 0;
+      }
+      cx /= landmarks.length;
+      cy /= landmarks.length;
+      cz /= landmarks.length;
+      
+      let maxD = 0;
+      for (const lm of landmarks) {
+        const dx = lm.x - cx;
+        const dy = lm.y - cy;
+        const dz = (lm.z || 0) - cz;
+        const d = Math.hypot(dx, dy, dz);
+        if (d > maxD) maxD = d;
+      }
+      if (maxD === 0) maxD = 1e-6;
+      
+      return landmarks.map(lm => ({
+        x: (lm.x - cx) / maxD,
+        y: (lm.y - cy) / maxD,
+        z: ((lm.z || 0) - cz) / maxD
+      }));
+    }
+    
+    // 匹配函数
+    function findBestMatch(realtimeLandmarks) {
+      if (handsDatabase.length === 0 || !realtimeLandmarks) return null;
+      
+      const normalizedRT = normalizeLandmarks(realtimeLandmarks);
+      const rtVec = landmarksToVector(normalizedRT);
+      
+      let bestMatch = null;
+      let bestSimilarity = 0;
+      
+      for (const dbEntry of handsDatabase) {
+        const dbLandmarks = dbEntry.landmarks || [];
+        if (dbLandmarks.length === 0) continue;
+        
+        const normalizedDB = normalizeLandmarks(dbLandmarks);
+        const dbVec = landmarksToVector(normalizedDB);
+        
+        // 保证向量长度一致（裁剪或填充）
+        const minLen = Math.min(rtVec.length, dbVec.length);
+        const sim = cosineSimilarity(rtVec.slice(0, minLen), dbVec.slice(0, minLen));
+        
+        if (sim > bestSimilarity) {
+          bestSimilarity = sim;
+          bestMatch = { ...dbEntry, similarity: sim };
+        }
+      }
+      
+      return bestSimilarity > SIMILARITY_THRESHOLD ? bestMatch : null;
+    }
+    
+    // 触发艺术作品显示
+
+function triggerArtworkDisplay(match) {
+
+const artworkPath = match.artwork || '';
+
+
+// 预加载图片
+
+const img = new Image();
+
+img.onload = () => {
+
+// 图片加载成功后设置背景
+
+artworkLayer.style.backgroundImage = `url('${artworkPath}')`;
+
+artworkLayer.classList.add('active');
+
+artworkInfo.classList.add('active');
+        
+        // 摄像头缩小到左下角
+        canvas.classList.add('minimized');
+        
+        artworkTitle.textContent = artworkPath.split('/').pop() || '未命名作品';
+        artworkDesc.textContent = `匹配度: ${(match.similarity * 100).toFixed(1)}%`;
+        console.log('✓ 图片加载成功:', artworkPath);
+      };
+      img.onerror = () => {
+        console.error('❌ 图片加载失败:', artworkPath);
+        loadStatus.textContent = `⚠ 图片加载失败: ${artworkPath}`;
+        loadStatus.style.color = '#ff6666';
+      };
+      img.src = artworkPath;
+    }
+    
+    function hideArtworkDisplay() {
+      artworkLayer.classList.remove('active');
+      artworkInfo.classList.remove('active');
+      canvas.classList.remove('minimized');
+    }
+    
+    // MediaPipe 回调
+    function onHandsResults(results) {
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        statusText.textContent = '等待检测到手部...';
+        statusText.classList.remove('detecting');
+        statusText.classList.add('waiting');
+        matchInfo.style.display = 'none';
+        currentMatch = null;
+        hideArtworkDisplay();
+        return;
+      }
+      
+      statusText.textContent = `已检测到 ${results.multiHandLandmarks.length} 只手`;
+      statusText.classList.add('detecting');
+      statusText.classList.remove('waiting');
+      
+      // 匹配逻辑：使用第一只检测到的手
+      const bestMatch = findBestMatch(results.multiHandLandmarks[0]);
+      
+      if (bestMatch) {
+        if (!currentMatch || currentMatch.artwork !== bestMatch.artwork) {
+          // 新匹配开始
+          currentMatch = bestMatch;
+          matchStartTime = Date.now();
+          matchInfo.style.display = 'block';
+          matchInfo.textContent = `匹配中: ${bestMatch.artwork || '作品'} (${(bestMatch.similarity * 100).toFixed(1)}%)`;
+        } else {
+          // 继续匹配
+          const elapsed = Date.now() - matchStartTime;
+          matchInfo.textContent = `匹配中: ${bestMatch.artwork || '作品'} (${(bestMatch.similarity * 100).toFixed(1)}%) - ${(elapsed / 1000).toFixed(1)}s`;
+          
+          if (elapsed >= matchHoldDuration && !artworkLayer.classList.contains('active')) {
+            triggerArtworkDisplay(bestMatch);
+            console.log(`🎨 匹配成功: ${bestMatch.artwork}`);
+          }
+        }
+      } else {
+        // 没有好的匹配
+        if (currentMatch) {
+          currentMatch = null;
+          matchInfo.style.display = 'none';
+          setTimeout(() => hideArtworkDisplay(), 100);
+        }
+      }
+      
+      // 绘制关键点和连线
+      ctx.save();
+      
+      for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+        const landmarks = results.multiHandLandmarks[i];
+        
+        const canvasLandmarks = landmarks.map(lm => ({
+          x: isMirrored ? canvas.width - (lm.x * canvas.width) : lm.x * canvas.width,
+          y: lm.y * canvas.height,
+          z: lm.z
+        }));
+        
+        const HAND_CONNECTIONS = [
+          [0, 1], [1, 2], [2, 3], [3, 4],
+          [0, 5], [5, 6], [6, 7], [7, 8],
+          [0, 9], [9, 10], [10, 11], [11, 12],
+          [0, 13], [13, 14], [14, 15], [15, 16],
+          [0, 17], [17, 18], [18, 19], [19, 20],
+          [5, 9], [9, 13], [13, 17]
+        ];
+        
+        ctx.strokeStyle = 'rgba(0, 255, 136, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        
+        for (const [start, end] of HAND_CONNECTIONS) {
+          const p1 = canvasLandmarks[start];
+          const p2 = canvasLandmarks[end];
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+        }
+        
+        for (let j = 0; j < canvasLandmarks.length; j++) {
+          const lm = canvasLandmarks[j];
+          const radius = j === 0 ? 5 : 3;
+          
+          const gradient = ctx.createRadialGradient(lm.x, lm.y, 0, lm.x, lm.y, radius * 2);
+          gradient.addColorStop(0, 'rgba(255, 0, 102, 0.6)');
+          gradient.addColorStop(1, 'rgba(255, 0, 102, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(lm.x, lm.y, radius * 2, 0, Math.PI * 2);
+          ctx.fill();
+          
+          ctx.fillStyle = '#ff0066';
+          ctx.beginPath();
+          ctx.arc(lm.x, lm.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      
+      ctx.restore();
+    }
+    
+    // 启动应用
+    autoLoadData();
+    initCamera();
+  </script>
+</body>
+</html>
